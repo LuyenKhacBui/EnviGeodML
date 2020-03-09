@@ -18,7 +18,7 @@ from sklearn.linear_model import LassoLars
 from sklearn.linear_model import PassiveAggressiveRegressor
 from sklearn.linear_model import RANSACRegressor
 from sklearn.linear_model import SGDRegressor
-import sys, h5py, time
+import sys, h5py, time, os
 import numpy as np
 from Utils import prgrsTime
 
@@ -59,8 +59,8 @@ def summarize_scores(name, score, scores):
 # prepare a list of ml models
 def get_models(models=dict()):
 	# linear models
-	#models['lr'] = LinearRegression()
-	#models['lasso'] = Lasso()
+	models['lr'] = LinearRegression()
+	models['lasso'] = Lasso()
 	models['ridge'] = Ridge()
 	'''models['en'] = ElasticNet()
 	models['huber'] = HuberRegressor()
@@ -222,33 +222,32 @@ timenum = [float(item[0:4])+float(item[4:6])/12 for item in timestr]
 dataset = np.empty((ntim, 3))
 missmnths,blclen = 22+29,12 # GRACE has 22 missing months and 29 months from 2017.07 to 2019.11. They were all filled-in with NaNs in Matlab
 datidx = 0 # Data under studied. 0 = GRACE
-score, scores = np.full((nwid,nlen),np.nan), np.full((nwid,nlen,blclen),np.nan)
-tic = time.time()
-intvlprct = max(round(float(nwid)/10), 1)
-print('Implement Recursive Multi-step Forecast')
-for row in range(nwid):
-	for col in range(nlen):
-		if np.count_nonzero(np.isnan(grace[row, col, :])==True) > missmnths:
-			a=1
-		else:
-			dataset[0:ntim,0],dataset[0:ntim,1],dataset[0:ntim,2] = grace[row, col, :],gldas[row, col, :],trmm[row, col, :]			
-			dataset[0:ntim,datidx] = nanfill(dataset[0:ntim,0],'linear') # Fill NaNs by linear interpolation						
-			# Split data to train (2003.01-2013.12) and test(2014.01-2016.12) then divide into 12-month blocks (columns))
-			#print('Split data to train and test')
-			sttrain,sttest,fntest = timestr.index('20030101'),timestr.index('20140101'),timestr.index('20161201')
-			train, test = split_dataset(dataset,sttrain,sttest,fntest,blclen) # make sure to change paras in this fn if needed
-			# prepare the models to evaluate
-			models = get_models()			
-			n_input = blclen
-			# evaluate each model
-			mnts = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-			#print(type(days))
-			for name, model in models.items():
-				# evaluate and get scores
-				
+# prepare the models to evaluate
+models = get_models()
+# evaluate each model
+for no, [name, model] in enumerate(models.items()):
+	print("Implement the Recursive Multi-step Forecast on model no: %d / %d %s" %(no+1, len(models), type(model).__name__))
+	h5ofile = type(model).__name__ + '.h5'
+	score, scores = np.full((nwid,nlen),np.nan), np.full((nwid,nlen,blclen),np.nan)
+	tic = time.time()
+	intvlprct = max(round(float(nwid)/10), 1)
+	#for row in range(nwid):
+	for row in range(20):
+		for col in range(nlen):
+			if np.count_nonzero(np.isnan(grace[row, col, :])==True) > missmnths:
+				pass
+			else:
+				dataset[0:ntim,0],dataset[0:ntim,1],dataset[0:ntim,2] = grace[row, col, :],gldas[row, col, :],trmm[row, col, :]			
+				dataset[0:ntim,datidx] = nanfill(dataset[0:ntim,0],'linear') # Fill NaNs by linear interpolation						
+				# Split data to train (2003.01-2013.12) and test(2014.01-2016.12) then divide into 12-month blocks (columns))
+				sttrain,sttest,fntest = timestr.index('20030101'),timestr.index('20140101'),timestr.index('20161201')				
+				train, test = split_dataset(dataset,sttrain,sttest,fntest,blclen) # make sure to change paras in this fn if needed							
+				n_input = blclen				
+				mnts = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']				
+				# evaluate and get scores					
 				# score:  rmse of all values, e.g., 3 yrs * 12 mnths = 36 values
 				# scores: rmse for each month. rmse of [Jan Feb ... Dec]
-				score, scores, predictions = evaluate_model(model, train, test, n_input, datidx) # 0 is the index of studied data, GRACE in this
+				score[row,col], scores[row,col,:], predictions = evaluate_model(model, train, test, n_input, datidx) # 0 is the index of studied data, GRACE in this
 				'''trainseries = train[:,:,datidx].flatten()
 				testseries  = test[:,:,datidx].flatten()
 				pred = predictions.flatten()
@@ -265,8 +264,20 @@ for row in range(nwid):
 			pyplot.legend()
 			pyplot.show()
 			'''
-	if (row + 1) % intvlprct == 0 or (row + 1) == nwid:
-		prgrs_prct = float(row + 1) / nwid * 100
-		prgrs_runtime = time.time() - tic
-		prgrs_str = '\t\tRow: ' + str(row + 1) + ' / ' + str(nwid) + ' ---> ' + str(int(round(prgrs_prct))) + ' % '
-		f = prgrsTime(prgrs_str, prgrs_prct, prgrs_runtime)
+		if (row + 1) % intvlprct == 0 or (row + 1) == nwid:
+			prgrs_prct = float(row + 1) / nwid * 100
+			prgrs_runtime = time.time() - tic
+			prgrs_str = '\t\tRow: ' + str(row + 1) + ' / ' + str(nwid) + ' ---> ' + str(int(round(prgrs_prct))) + ' % '
+			f = prgrsTime(prgrs_str, prgrs_prct, prgrs_runtime)
+	# Save to .h5 file
+	if os.path.exists(h5ofile):
+		os.remove(h5ofile)
+		print('Deleting previous %s'%(h5ofile))
+	print('Save results to .h5 file: %s' %(h5ofile))
+	f = h5py.File(h5ofile,"w")
+	f.attrs['help'] = 'Apply Recursive Multi-step to forecast gaps in GRACE TWS'
+	dset = f.create_dataset('score',data=score)
+	dset.attrs['help'] = 'Pixels score computed from all predicted values of all months over the test period '+timestr[sttest]+'-'+timestr[fntest]
+	dset = f.create_dataset('scores',data=scores)
+	dset.attrs['help'] = 'Pixels score computed from all predicted values for each month over the test period '+timestr[sttest]+'-'+timestr[fntest]
+	f.close()
